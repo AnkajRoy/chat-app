@@ -70,11 +70,11 @@ export class ChatComponent implements OnInit, OnDestroy {
         })
       );
 
-      // Run camera, PeerJS, and Firebase init ALL in parallel
+      // Run camera, peer ID gen, and Firebase init ALL in parallel
       this.matchingService.init();
       const [stream] = await Promise.all([
         this.peerService.getLocalStream(),
-        this.peerService.initPeer()
+        this.peerService.init()
       ]);
 
       setTimeout(() => {

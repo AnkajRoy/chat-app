@@ -3,7 +3,7 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 // Firebase imports
-import { initializeApp, FirebaseApp } from 'firebase/app';
+import { initializeApp, getApp, FirebaseApp } from 'firebase/app';
 import {
   getDatabase,
   ref,
@@ -29,8 +29,8 @@ export class MatchingService {
   // Track recently matched peers to avoid re-matching
   private recentPeers: Set<string> = new Set();
 
-  // Firebase properties
-  private db!: Database;
+  // Firebase properties (db is public so peer service can reuse it for signaling)
+  db!: Database;
   private firebaseApp!: FirebaseApp;
 
   // Firebase listener cleanup
@@ -54,7 +54,11 @@ export class MatchingService {
   // ======================== FIREBASE ========================
 
   private initFirebase(): void {
-    this.firebaseApp = initializeApp(environment.firebase);
+    try {
+      this.firebaseApp = getApp();
+    } catch {
+      this.firebaseApp = initializeApp(environment.firebase);
+    }
     this.db = getDatabase(this.firebaseApp);
   }
 
@@ -215,6 +219,7 @@ export class MatchingService {
   // ======================== PRESENCE ========================
 
   trackPresence(peerId: string): void {
+    this.myPeerId = peerId;
     if (this.useFirebase) {
       const onlineRef = ref(this.db, `online/${peerId}`);
       set(onlineRef, true);
