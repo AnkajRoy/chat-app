@@ -24,6 +24,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   isAudioEnabled = true;
   isVideoEnabled = true;
   isSearching = false;
+  noOneAvailable = false;
 
   private subs: Subscription[] = [];
 
@@ -60,7 +61,13 @@ export class ChatComponent implements OnInit, OnDestroy {
           if (s === 'connected') this.isSearching = false;
         }),
         this.matchingService.matched$.subscribe(remotePeerId => {
+          this.noOneAvailable = false;
           this.peerService.connectToPeer(remotePeerId);
+        }),
+        this.matchingService.noStrangersAvailable$.subscribe(() => {
+          this.isSearching = false;
+          this.noOneAvailable = true;
+          this.status = 'disconnected';
         }),
         this.peerService.peerDisconnected$.subscribe(() => {
           this.status = 'disconnected';
@@ -77,6 +84,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   async findStranger(): Promise<void> {
     this.peerService.disconnect();
     this.isSearching = true;
+    this.noOneAvailable = false;
     this.status = 'connecting';
     const peerId = this.peerService.peerId$.value;
     if (peerId) {

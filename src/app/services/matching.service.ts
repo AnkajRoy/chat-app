@@ -23,6 +23,10 @@ import 'gun/sea';
 export class MatchingService {
   private myPeerId = '';
   matched$ = new Subject<string>();
+  noStrangersAvailable$ = new Subject<void>();
+
+  // Track recently matched peers to avoid re-matching
+  private recentPeers: Set<string> = new Set();
 
   // Firebase properties
   private db!: Database;
@@ -55,24 +59,37 @@ export class MatchingService {
 
     const waitingSnapshot = await get(ref(this.db, 'waiting'));
     const waitingUsers = waitingSnapshot.val() || {};
-    const availableUsers = Object.keys(waitingUsers).filter(id => id !== peerId);
+    // Filter out ourselves AND recently matched peers
+    const availableUsers = Object.keys(waitingUsers)
+      .filter(id => id !== peerId && !this.recentPeers.has(id));
 
     if (availableUsers.length > 0) {
       const randomIndex = Math.floor(Math.random() * availableUsers.length);
       const matchedPeerId = availableUsers[randomIndex];
+
+      // Track this peer so we don't re-match
+      this.recentPeers.add(matchedPeerId);
 
       await remove(ref(this.db, `waiting/${matchedPeerId}`));
       await set(ref(this.db, `matches/${matchedPeerId}`), peerId);
 
       this.matched$.next(matchedPeerId);
     } else {
+      // No new strangers available — add to waiting pool
       await set(waitingRef, true);
       onDisconnect(waitingRef).remove();
+
+      // Notify UI that no one new is available right now
+      const allWaiting = Object.keys(waitingUsers).filter(id => id !== peerId);
+      if (allWaiting.length > 0 && availableUsers.length === 0) {
+        this.noStrangersAvailable$.next();
+      }
 
       const matchRef = ref(this.db, `matches/${peerId}`);
       onValue(matchRef, async (snapshot) => {
         const matchedPeerId = snapshot.val();
         if (matchedPeerId) {
+          this.recentPeers.add(matchedPeerId);
           await remove(matchRef);
           await remove(waitingRef);
           this.matched$.next(matchedPeerId);
@@ -104,12 +121,13 @@ export class MatchingService {
       }
 
       const availableUsers = Object.keys(data)
-        .filter(key => key !== '_' && key !== peerId && data[key] && data[key] !== 'matched');
+        .filter(key => key !== '_' && key !== peerId && data[key] && data[key] !== 'matched' && !this.recentPeers.has(key));
 
       if (availableUsers.length > 0) {
         const randomIndex = Math.floor(Math.random() * availableUsers.length);
         const matchedPeerId = availableUsers[randomIndex];
 
+        this.recentPeers.add(matchedPeerId);
         lobby.get(matchedPeerId).put('matched');
         this.gun.get('strangerchat-matches').get(matchedPeerId).put(peerId);
         lobby.get(peerId).put(null);
@@ -125,7 +143,8 @@ export class MatchingService {
     lobby.get(peerId).put(peerId);
 
     this.matchListener = this.gun.get('strangerchat-matches').get(peerId).on((matchedPeerId: string) => {
-      if (matchedPeerId && matchedPeerId !== 'null') {
+      if (matchedPeerId && matchedPeerId !== 'null' && !this.recentPeers.has(matchedPeerId)) {
+        this.recentPeers.add(matchedPeerId);
         this.gun.get('strangerchat-matches').get(peerId).put(null);
         lobby.get(peerId).put(null);
 
