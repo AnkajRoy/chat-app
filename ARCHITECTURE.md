@@ -5,8 +5,9 @@
 2. [Tech Stack](#tech-stack)
 3. [Project Structure](#project-structure)
 4. [End-to-End Flow](#end-to-end-flow)
-5. [Firebase Realtime Database](#firebase-realtime-database)
-6. [WebRTC & PeerJS](#webrtc--peerjs)
+5. [Gun.js (Current) — Decentralized DB](#gunjs-current--decentralized-db)
+6. [Firebase Realtime Database (Legacy — commented out)](#firebase-realtime-database-legacy--commented-out)
+7. [WebRTC & PeerJS](#webrtc--peerjs)
 7. [Services Deep Dive](#services-deep-dive)
 8. [Components Deep Dive](#components-deep-dive)
 9. [Deployment](#deployment)
@@ -21,7 +22,8 @@ StrangerChat is an Omegle-style random video + text chat application. Two strang
 - No login or signup required
 - Completely anonymous
 - Video and audio streams go directly between users (P2P) — not through any server
-- Firebase is only used for matching strangers (signaling), not for storing messages or video
+- Gun.js (decentralized P2P database) is used for matching strangers — no accounts or config needed
+- Firebase code is kept commented out as a legacy alternative
 
 ---
 
@@ -32,7 +34,8 @@ StrangerChat is an Omegle-style random video + text chat application. Two strang
 | **Angular 17** | Frontend framework (standalone components) |
 | **PeerJS** | WebRTC library for P2P video/audio/data connections |
 | **PeerJS Cloud Server** | Free signaling server to establish WebRTC connections |
-| **Firebase Realtime Database** | Lobby system to match random strangers |
+| **Gun.js** | Decentralized P2P database for stranger matching (no config needed) |
+| **Firebase Realtime Database** | Legacy option (commented out) — requires account setup |
 | **PrimeFlex** | CSS utility framework for responsive layouts |
 | **PrimeIcons** | Icon library |
 | **GitHub Pages** | Static site hosting |
@@ -145,7 +148,81 @@ Here's what happens from the moment a user opens the app to chatting with a stra
 
 ---
 
-## Firebase Realtime Database
+## Gun.js (Current) — Decentralized DB
+
+### Why Gun.js?
+
+Gun.js is a decentralized, open-source, peer-to-peer database. Unlike Firebase, it requires **zero configuration** — no accounts, no API keys, no setup. It works immediately on any deployed link using free public relay servers.
+
+### How It Works
+
+```
+┌──────────┐     Gun.js Relay Peers      ┌──────────┐
+│  User A  │◄──────────────────────────►│  User B  │
+│ (Browser)│  gun-manhattan.herokuapp   │ (Browser)│
+│          │  gun-us.herokuapp          │          │
+└──────────┘                            └──────────┘
+```
+
+Gun.js uses public relay servers to sync data between peers. The data is distributed — no single server owns it.
+
+### Database Structure (Gun.js)
+
+```
+Gun.js Decentralized Graph
+│
+├── strangerchat-lobby/           # Users looking for a match
+│   ├── {peerId-abc}: "peerId-abc"   # User A is waiting
+│   └── {peerId-xyz}: "matched"      # User B was matched
+│
+└── strangerchat-matches/         # Match notifications
+    └── {peerId-abc}: "peerId-xyz"   # Tells User A to connect to User B
+```
+
+### Matching Flow with Gun.js
+
+**User A joins (no one waiting):**
+1. Checks `strangerchat-lobby` → empty
+2. Writes `lobby/peerA = "peerA"` (adds self to waiting)
+3. Listens on `strangerchat-matches/peerA` for incoming match
+
+**User B joins (User A is waiting):**
+1. Checks `strangerchat-lobby` → finds peerA
+2. Marks `lobby/peerA = "matched"` (removes from available pool)
+3. Writes `matches/peerA = "peerB"` (notifies User A)
+4. User B immediately connects to peerA via PeerJS
+5. User A's listener fires → connects to peerB via PeerJS
+
+### Gun.js vs Firebase Comparison
+
+| Feature | Gun.js | Firebase |
+|---|---|---|
+| Account needed | No | Yes |
+| Config needed | No | Yes (API keys) |
+| Free tier limits | Unlimited | 1GB storage, 10GB/month transfer |
+| Decentralized | Yes | No (Google servers) |
+| Setup time | Zero | ~10 minutes |
+| Offline support | Yes (built-in) | Yes |
+| Security rules | Peer-level (SEA module) | Server-side rules |
+
+### Relay Peers
+
+```typescript
+this.gun = Gun({
+  peers: [
+    'https://gun-manhattan.herokuapp.com/gun',
+    'https://gun-us.herokuapp.com/gun',
+  ]
+});
+```
+
+These are free public relay servers maintained by the Gun.js community. They only relay data — they don't store it permanently. If they go down, the app still works for users already connected.
+
+---
+
+## Firebase Realtime Database (Legacy — commented out)
+
+> **Note:** Firebase code is kept commented out in `matching.service.ts` as a fallback. To switch back, uncomment the Firebase code and comment out the Gun.js code.
 
 ### Why Firebase?
 
@@ -433,7 +510,7 @@ This pushes the build output to the `gh-pages` branch of the repository.
        ├──────────────────────────────►  PeerJS Cloud Server
        │
        │  Lobby/Matching
-       ├──────────────────────────────►  Firebase Realtime DB
+       ├──────────────────────────────►  Gun.js Public Relay Peers
        │
        │  NAT Traversal
        ├──────────────────────────────►  Google STUN Servers
@@ -450,7 +527,7 @@ This pushes the build output to the `gh-pages` branch of the repository.
 
 | Data | Where it goes | Server involved? |
 |---|---|---|
-| Waiting/matching status | Firebase Realtime DB | Yes (Firebase) |
+| Waiting/matching status | Gun.js (decentralized P2P) | Relay only (no storage) |
 | Peer ID exchange | PeerJS Cloud Server | Yes (signaling only) |
 | ICE candidates | Google STUN servers | Yes (NAT traversal) |
 | Video/Audio streams | Direct P2P between browsers | **No** |

@@ -1,5 +1,11 @@
 export const environment = {
   production: false,
+  useFirebase: true, // true = Firebase, false = Gun.js
+  gunPeers: [
+    'https://gun-manhattan.herokuapp.com/gun',
+    'https://gun-us.herokuapp.com/gun',
+    // Add your own Gun.js relay server URL here
+  ],
   firebase: {
     apiKey: 'AIzaSyAw0EVvp4PftTtHsR73aO7rjfQUnKTWTBQ',
     authDomain: 'chat-app-4bbe0.firebaseapp.com',
