@@ -37,7 +37,10 @@
             <p *ngIf="isSearching" style="color: #6b7280;">
               <i class="pi pi-spin pi-spinner mr-2"></i>Looking for stranger...
             </p>
-            <p *ngIf="!isSearching" style="color: #6b7280;">No one connected</p>
+            <p *ngIf="noOneAvailable && !isSearching" style="color: #f59e0b;">
+              <i class="pi pi-info-circle mr-2"></i>No new strangers available. Waiting for someone new...
+            </p>
+            <p *ngIf="!isSearching && !noOneAvailable" style="color: #6b7280;">No one connected</p>
           </div>
         </div>
         <span class="absolute text-sm px-2 py-1 border-round"

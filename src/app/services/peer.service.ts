@@ -21,15 +21,27 @@ export class PeerService {
   connectionStatus$ = new BehaviorSubject<'disconnected' | 'connecting' | 'connected'>('disconnected');
   peerDisconnected$ = new Subject<void>();
 
-  initPeer(): Promise<string> {
+  private readonly METERED_API_KEY = '6cd6b7e2cc7ccbab5fa6c49c3fb4f9ce4dc2';
+
+  async initPeer(): Promise<string> {
+    // Fetch fresh TURN credentials from Metered API
+    let iceServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ];
+
+    try {
+      const response = await fetch(
+        `https://app-ak.metered.live/api/v1/turn/credentials?apiKey=${this.METERED_API_KEY}`
+      );
+      const turnServers = await response.json();
+      iceServers = [...iceServers, ...turnServers];
+    } catch (err) {
+      console.warn('Failed to fetch TURN credentials, using STUN only:', err);
+    }
+
     return new Promise((resolve, reject) => {
       this.peer = new Peer({
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-          ]
-        }
+        config: { iceServers }
       });
 
       this.peer.on('open', (id) => {
