@@ -25,7 +25,6 @@ export class PeerService {
   private localStream: MediaStream | null = null;
   private signalingRefs: DatabaseReference[] = [];
   private currentRoomId = '';
-
   private myId = '';
 
   peerId$ = new BehaviorSubject<string>('');
@@ -34,21 +33,13 @@ export class PeerService {
   connectionStatus$ = new BehaviorSubject<'disconnected' | 'connecting' | 'connected'>('disconnected');
   peerDisconnected$ = new Subject<void>();
 
-  private readonly METERED_API_KEY = '6cd6b7e2cc7ccbab5fa6c49c3fb4f9ce4dc2';
-  private cachedIceServers: RTCIceServer[] | null = null;
-
   constructor(private matchingService: MatchingService) {}
 
   // ======================== INIT ========================
 
-  async init(): Promise<string> {
-    // Generate a unique ID (no PeerJS server needed)
+  init(): string {
     this.myId = crypto.randomUUID();
     this.peerId$.next(this.myId);
-
-    // Fetch TURN servers in background
-    this.fetchIceServers();
-
     return this.myId;
   }
 
@@ -56,109 +47,94 @@ export class PeerService {
     if (this.localStream) return this.localStream;
     this.localStream = await navigator.mediaDevices.getUserMedia({
       video: true,
-      audio: true
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
     return this.localStream;
-  }
-
-  // ======================== ICE SERVERS ========================
-
-  private async fetchIceServers(): Promise<RTCIceServer[]> {
-    if (this.cachedIceServers) return this.cachedIceServers;
-
-    const stun: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ];
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch(
-        `https://app-ak.metered.live/api/v1/turn/credentials?apiKey=${this.METERED_API_KEY}`,
-        { signal: controller.signal }
-      );
-      clearTimeout(timeout);
-      const turnServers = await response.json();
-      this.cachedIceServers = [...stun, ...turnServers];
-    } catch {
-      this.cachedIceServers = stun;
-    }
-    return this.cachedIceServers;
   }
 
   // ======================== CONNECT ========================
 
   async connectToPeer(remotePeerId: string, isInitiator: boolean): Promise<void> {
+    // Fully destroy old connection
+    this.fullCleanup();
     this.connectionStatus$.next('connecting');
     this.messages$.next([]);
-    this.cleanupConnection();
 
     const db = this.matchingService.db;
-    const iceServers = await this.fetchIceServers();
 
-    // Create RTCPeerConnection
-    const pc = new RTCPeerConnection({ iceServers });
+    // Create fresh RTCPeerConnection with just STUN (no slow TURN fetch)
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    });
     this.peerConnection = pc;
 
     // Add local tracks
     if (this.localStream) {
-      this.localStream.getTracks().forEach(track => {
-        pc.addTrack(track, this.localStream!);
-      });
+      this.localStream.getTracks().forEach(track => pc.addTrack(track, this.localStream!));
     }
 
     // Receive remote tracks
     pc.ontrack = (event) => {
-      if (event.streams[0]) {
-        this.remoteStream$.next(event.streams[0]);
-      }
+      if (event.streams[0]) this.remoteStream$.next(event.streams[0]);
     };
 
-    // Firebase signaling paths — unique room based on sorted peer IDs
+    // Room ID: use timestamp to avoid stale data from previous sessions
     const roomId = [this.myId, remotePeerId].sort().join('_');
     const roomRef = ref(db, `signaling/${roomId}`);
+    const statusRef = ref(db, `signaling/${roomId}/status`);
     const offerRef = ref(db, `signaling/${roomId}/offer`);
     const answerRef = ref(db, `signaling/${roomId}/answer`);
     const callerCandidatesRef = ref(db, `signaling/${roomId}/callerCandidates`);
     const calleeCandidatesRef = ref(db, `signaling/${roomId}/calleeCandidates`);
 
-    // Track room and refs for cleanup
     this.currentRoomId = roomId;
-    const byeRef = ref(db, `signaling/${roomId}/bye`);
-    this.signalingRefs = [offerRef, answerRef, callerCandidatesRef, calleeCandidatesRef, byeRef, roomRef];
+    this.signalingRefs = [statusRef, offerRef, answerRef, callerCandidatesRef, calleeCandidatesRef, roomRef];
 
-    // Connection state monitoring
+    // Initiator clears stale room data and sets status to 'active'
+    if (isInitiator) {
+      await remove(roomRef);
+      await set(statusRef, 'active');
+    }
+
+    // Watch room status — if it becomes 'closed', the other peer left
+    onValue(statusRef, (snapshot) => {
+      if (snapshot.val() === 'closed') {
+        this.fullCleanup();
+        this.remoteStream$.next(null);
+        this.messages$.next([]);
+        this.connectionStatus$.next('disconnected');
+        this.peerDisconnected$.next();
+      }
+    });
+
+    // WebRTC connection state
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
         this.connectionStatus$.next('connected');
-      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        this.connectionStatus$.next('disconnected');
+      } else if (pc.connectionState === 'failed') {
+        this.fullCleanup();
         this.remoteStream$.next(null);
+        this.connectionStatus$.next('disconnected');
         this.peerDisconnected$.next();
       }
     };
 
     if (isInitiator) {
       // === CALLER ===
-
-      // Create data channel
       const dc = pc.createDataChannel('chat', { ordered: true });
       this.setupDataChannel(dc);
 
-      // Send ICE candidates to Firebase
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          push(callerCandidatesRef, event.candidate.toJSON());
-        }
+        if (event.candidate) push(callerCandidatesRef, event.candidate.toJSON());
       };
 
-      // Create and send offer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await set(offerRef, { type: offer.type, sdp: offer.sdp });
 
-      // Listen for answer
       onValue(answerRef, async (snapshot) => {
         const data = snapshot.val();
         if (data && !pc.currentRemoteDescription) {
@@ -166,30 +142,19 @@ export class PeerService {
         }
       });
 
-      // Listen for callee ICE candidates
       onChildAdded(calleeCandidatesRef, (snapshot) => {
         const data = snapshot.val();
-        if (data) {
-          pc.addIceCandidate(new RTCIceCandidate(data));
-        }
+        if (data) pc.addIceCandidate(new RTCIceCandidate(data));
       });
 
     } else {
       // === CALLEE ===
+      pc.ondatachannel = (event) => this.setupDataChannel(event.channel);
 
-      // Receive data channel
-      pc.ondatachannel = (event) => {
-        this.setupDataChannel(event.channel);
-      };
-
-      // Send ICE candidates to Firebase
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          push(calleeCandidatesRef, event.candidate.toJSON());
-        }
+        if (event.candidate) push(calleeCandidatesRef, event.candidate.toJSON());
       };
 
-      // Listen for offer
       onValue(offerRef, async (snapshot) => {
         const data = snapshot.val();
         if (data && !pc.currentRemoteDescription) {
@@ -200,25 +165,11 @@ export class PeerService {
         }
       });
 
-      // Listen for caller ICE candidates
       onChildAdded(callerCandidatesRef, (snapshot) => {
         const data = snapshot.val();
-        if (data) {
-          pc.addIceCandidate(new RTCIceCandidate(data));
-        }
+        if (data) pc.addIceCandidate(new RTCIceCandidate(data));
       });
     }
-
-    // Listen for "bye" signal — instant disconnect detection via Firebase
-    onValue(byeRef, (snapshot) => {
-      if (snapshot.val()) {
-        this.cleanupConnection();
-        this.remoteStream$.next(null);
-        this.messages$.next([]);
-        this.connectionStatus$.next('disconnected');
-        this.peerDisconnected$.next();
-      }
-    });
 
     // Timeout: if not connected within 10s, retry
     const timeout = setTimeout(() => {
@@ -240,20 +191,11 @@ export class PeerService {
 
   private setupDataChannel(dc: RTCDataChannel): void {
     this.dataChannel = dc;
-
-    dc.onopen = () => {
-      this.connectionStatus$.next('connected');
-    };
-
+    dc.onopen = () => this.connectionStatus$.next('connected');
     dc.onmessage = (event) => {
       const msgs = this.messages$.value;
-      this.messages$.next([...msgs, {
-        text: event.data,
-        sender: 'stranger',
-        timestamp: new Date()
-      }]);
+      this.messages$.next([...msgs, { text: event.data, sender: 'stranger', timestamp: new Date() }]);
     };
-
     dc.onclose = () => {
       this.connectionStatus$.next('disconnected');
       this.remoteStream$.next(null);
@@ -264,14 +206,10 @@ export class PeerService {
   // ======================== MESSAGING ========================
 
   sendMessage(text: string): void {
-    if (this.dataChannel && this.dataChannel.readyState === 'open') {
+    if (this.dataChannel?.readyState === 'open') {
       this.dataChannel.send(text);
       const msgs = this.messages$.value;
-      this.messages$.next([...msgs, {
-        text,
-        sender: 'me',
-        timestamp: new Date()
-      }]);
+      this.messages$.next([...msgs, { text, sender: 'me', timestamp: new Date() }]);
     }
   }
 
@@ -287,18 +225,13 @@ export class PeerService {
 
   // ======================== CLEANUP ========================
 
-  private cleanupConnection(deleteRoom = true): void {
-    // Remove Firebase signaling listeners
+  private fullCleanup(): void {
+    // Remove all Firebase listeners
     this.signalingRefs.forEach(r => off(r));
-
-    // Clean up signaling data in Firebase (only if requested)
-    if (deleteRoom && this.signalingRefs.length > 0) {
-      const roomRef = this.signalingRefs[this.signalingRefs.length - 1];
-      remove(roomRef).catch(() => {});
-    }
     this.signalingRefs = [];
+    this.currentRoomId = '';
 
-    // Close data channel
+    // Destroy data channel
     if (this.dataChannel) {
       this.dataChannel.onopen = null;
       this.dataChannel.onmessage = null;
@@ -307,7 +240,7 @@ export class PeerService {
       this.dataChannel = null;
     }
 
-    // Close peer connection
+    // Destroy peer connection completely
     if (this.peerConnection) {
       this.peerConnection.ontrack = null;
       this.peerConnection.onicecandidate = null;
@@ -320,25 +253,38 @@ export class PeerService {
 
   disconnect(): void {
     const roomId = this.currentRoomId;
+
+    // 1. Remove OUR listeners (so we don't self-trigger from status change)
+    this.signalingRefs.forEach(r => off(r));
+    this.signalingRefs = [];
     this.currentRoomId = '';
 
-    // Remove listeners + close WebRTC but DON'T delete the room yet
-    this.cleanupConnection(false);
+    // 2. Set room status to 'closed' — other peer detects this INSTANTLY
+    if (roomId && this.matchingService.db) {
+      set(ref(this.matchingService.db, `signaling/${roomId}/status`), 'closed').catch(() => {});
+    }
+
+    // 3. Fully destroy WebRTC
+    if (this.dataChannel) {
+      this.dataChannel.onopen = null;
+      this.dataChannel.onmessage = null;
+      this.dataChannel.onclose = null;
+      this.dataChannel.close();
+      this.dataChannel = null;
+    }
+    if (this.peerConnection) {
+      this.peerConnection.ontrack = null;
+      this.peerConnection.onicecandidate = null;
+      this.peerConnection.onconnectionstatechange = null;
+      this.peerConnection.ondatachannel = null;
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+
+    // 4. Reset state
     this.remoteStream$.next(null);
     this.messages$.next([]);
     this.connectionStatus$.next('disconnected');
-
-    // Signal "bye" to the other peer, THEN delete the room after a delay
-    if (roomId && this.matchingService.db) {
-      const db = this.matchingService.db;
-      const roomRef = ref(db, `signaling/${roomId}`);
-      set(ref(db, `signaling/${roomId}/bye`), true)
-        .then(() => {
-          // Give the other peer time to read the bye signal before deleting
-          setTimeout(() => remove(roomRef).catch(() => {}), 2000);
-        })
-        .catch(() => {});
-    }
   }
 
   destroy(): void {

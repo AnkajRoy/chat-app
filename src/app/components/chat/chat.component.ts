@@ -70,12 +70,10 @@ export class ChatComponent implements OnInit, OnDestroy {
         })
       );
 
-      // Run camera, peer ID gen, and Firebase init ALL in parallel
+      // Init Firebase + peer ID (sync), then get camera
       this.matchingService.init();
-      const [stream] = await Promise.all([
-        this.peerService.getLocalStream(),
-        this.peerService.init()
-      ]);
+      this.peerService.init();
+      const stream = await this.peerService.getLocalStream();
 
       setTimeout(() => {
         if (this.localVideo?.nativeElement) {
