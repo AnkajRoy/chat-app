@@ -9,6 +9,7 @@ import {
   ref,
   set,
   onValue,
+  off,
   remove,
   get,
   onDisconnect,
@@ -31,6 +32,9 @@ export class MatchingService {
   // Firebase properties
   private db!: Database;
   private firebaseApp!: FirebaseApp;
+
+  // Firebase listener cleanup
+  private firebaseMatchUnsub: (() => void) | null = null;
 
   // Gun.js properties
   private gun: any;
@@ -55,52 +59,74 @@ export class MatchingService {
   }
 
   private async joinLobbyFirebase(peerId: string): Promise<void> {
+    // Clean up any previous Firebase match listener
+    this.cleanupFirebaseListener();
+
     const waitingRef = ref(this.db, `waiting/${peerId}`);
 
-    const waitingSnapshot = await get(ref(this.db, 'waiting'));
-    const waitingUsers = waitingSnapshot.val() || {};
-    // Filter out ourselves AND recently matched peers
-    const availableUsers = Object.keys(waitingUsers)
-      .filter(id => id !== peerId && !this.recentPeers.has(id));
+    // Try to find a match, with retries to handle the race condition
+    // when both users click "Next" at roughly the same time
+    const maxRetries = 3;
+    const retryDelay = 1500; // ms
 
-    if (availableUsers.length > 0) {
-      const randomIndex = Math.floor(Math.random() * availableUsers.length);
-      const matchedPeerId = availableUsers[randomIndex];
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const waitingSnapshot = await get(ref(this.db, 'waiting'));
+      const waitingUsers = waitingSnapshot.val() || {};
+      const allOtherUsers = Object.keys(waitingUsers).filter(id => id !== peerId);
+      let availableUsers = allOtherUsers.filter(id => !this.recentPeers.has(id));
 
-      // Track this peer so we don't re-match
-      this.recentPeers.add(matchedPeerId);
-
-      await remove(ref(this.db, `waiting/${matchedPeerId}`));
-      await set(ref(this.db, `matches/${matchedPeerId}`), peerId);
-
-      // We found them — we are the initiator (caller)
-      this.matched$.next({ peerId: matchedPeerId, isInitiator: true });
-    } else {
-      // No new strangers available — add to waiting pool
-      await set(waitingRef, true);
-      onDisconnect(waitingRef).remove();
-
-      // Notify UI that no one new is available right now
-      const allWaiting = Object.keys(waitingUsers).filter(id => id !== peerId);
-      if (allWaiting.length > 0 && availableUsers.length === 0) {
-        this.noStrangersAvailable$.next();
+      // If no new strangers but others exist, clear history and allow re-matching
+      if (availableUsers.length === 0 && allOtherUsers.length > 0) {
+        this.recentPeers.clear();
+        availableUsers = allOtherUsers;
       }
 
-      const matchRef = ref(this.db, `matches/${peerId}`);
-      onValue(matchRef, async (snapshot) => {
-        const matchedPeerId = snapshot.val();
-        if (matchedPeerId) {
-          this.recentPeers.add(matchedPeerId);
-          await remove(matchRef);
-          await remove(waitingRef);
-          // They found us — we are the receiver (wait for incoming call)
-          this.matched$.next({ peerId: matchedPeerId, isInitiator: false });
-        }
-      });
+      if (availableUsers.length > 0) {
+        const randomIndex = Math.floor(Math.random() * availableUsers.length);
+        const matchedPeerId = availableUsers[randomIndex];
+
+        this.recentPeers.add(matchedPeerId);
+
+        await remove(ref(this.db, `waiting/${matchedPeerId}`));
+        await set(ref(this.db, `matches/${matchedPeerId}`), peerId);
+
+        this.matched$.next({ peerId: matchedPeerId, isInitiator: true });
+        return;
+      }
+
+      // No one found yet — wait briefly for the other user to re-join
+      if (attempt < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+
+    // After retries, add self to waiting pool and listen for incoming match
+    await set(waitingRef, true);
+    onDisconnect(waitingRef).remove();
+
+    const matchRef = ref(this.db, `matches/${peerId}`);
+    const unsubscribe = onValue(matchRef, async (snapshot) => {
+      const matchedPeerId = snapshot.val();
+      if (matchedPeerId) {
+        this.recentPeers.add(matchedPeerId);
+        this.cleanupFirebaseListener();
+        await remove(matchRef);
+        await remove(waitingRef);
+        this.matched$.next({ peerId: matchedPeerId, isInitiator: false });
+      }
+    });
+    this.firebaseMatchUnsub = () => off(matchRef);
+  }
+
+  private cleanupFirebaseListener(): void {
+    if (this.firebaseMatchUnsub) {
+      this.firebaseMatchUnsub();
+      this.firebaseMatchUnsub = null;
     }
   }
 
   private async leaveLobbyFirebase(): Promise<void> {
+    this.cleanupFirebaseListener();
     await remove(ref(this.db, `waiting/${this.myPeerId}`)).catch(() => {});
     await remove(ref(this.db, `matches/${this.myPeerId}`)).catch(() => {});
   }
@@ -122,8 +148,15 @@ export class MatchingService {
         return;
       }
 
-      const availableUsers = Object.keys(data)
-        .filter(key => key !== '_' && key !== peerId && data[key] && data[key] !== 'matched' && !this.recentPeers.has(key));
+      const allOtherUsers = Object.keys(data)
+        .filter(key => key !== '_' && key !== peerId && data[key] && data[key] !== 'matched');
+      let availableUsers = allOtherUsers.filter(key => !this.recentPeers.has(key));
+
+      // If no new strangers but others exist, clear history and allow re-matching
+      if (availableUsers.length === 0 && allOtherUsers.length > 0) {
+        this.recentPeers.clear();
+        availableUsers = allOtherUsers;
+      }
 
       if (availableUsers.length > 0) {
         const randomIndex = Math.floor(Math.random() * availableUsers.length);
@@ -145,7 +178,7 @@ export class MatchingService {
     lobby.get(peerId).put(peerId);
 
     this.matchListener = this.gun.get('strangerchat-matches').get(peerId).on((matchedPeerId: string) => {
-      if (matchedPeerId && matchedPeerId !== 'null' && !this.recentPeers.has(matchedPeerId)) {
+      if (matchedPeerId && matchedPeerId !== 'null') {
         this.recentPeers.add(matchedPeerId);
         this.gun.get('strangerchat-matches').get(peerId).put(null);
         lobby.get(peerId).put(null);
