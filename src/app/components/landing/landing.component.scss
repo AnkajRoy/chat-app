@@ -1,0 +1,12 @@
+.landing-container {
+  background: radial-gradient(ellipse at top, #1a1a3e 0%, #0f0f1a 70%);
+}
+
+.start-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+}
+
+.start-btn:active {
+  transform: scale(0.98);
+}

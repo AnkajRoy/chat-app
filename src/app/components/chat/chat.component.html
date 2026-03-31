@@ -1,0 +1,134 @@
+<div class="chat-layout flex flex-column" style="height: 100vh;">
+  <!-- Header -->
+  <div class="header flex align-items-center justify-content-between px-4 py-2"
+       style="background: #16162a; border-bottom: 1px solid #2a2a4a;">
+    <div class="flex align-items-center gap-2">
+      <i class="pi pi-video text-xl" style="color: #6366f1;"></i>
+      <span class="text-lg font-bold" style="color: #fff;">Stranger<span style="color: #6366f1;">Chat</span></span>
+    </div>
+    <div class="flex align-items-center gap-2">
+      <span class="status-badge px-2 py-1 border-round text-sm"
+            [style.background]="status === 'connected' ? '#065f46' : status === 'connecting' ? '#92400e' : '#7f1d1d'"
+            [style.color]="'#fff'">
+        <i class="pi" [ngClass]="{
+          'pi-circle-fill': status === 'connected',
+          'pi-spin pi-spinner': status === 'connecting',
+          'pi-circle': status === 'disconnected'
+        }" style="font-size: 0.6rem;"></i>
+        {{ status === 'connected' ? 'Connected' : status === 'connecting' ? 'Searching...' : 'Disconnected' }}
+      </span>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="flex-grow-1 flex flex-column lg:flex-row overflow-hidden">
+    <!-- Video Section -->
+    <div class="video-section flex flex-column lg:flex-row" style="flex: 1; min-height: 0;">
+      <!-- Stranger Video -->
+      <div class="relative flex-1" style="background: #0a0a15; min-height: 200px;">
+        <video #remoteVideo autoplay playsinline
+               style="width: 100%; height: 100%; object-fit: cover;"
+               [style.display]="status === 'connected' ? 'block' : 'none'"></video>
+        <div *ngIf="status !== 'connected'"
+             class="flex align-items-center justify-content-center"
+             style="position: absolute; inset: 0;">
+          <div class="text-center">
+            <i class="pi pi-user text-5xl mb-2" style="color: #4a4a6a;"></i>
+            <p *ngIf="isSearching" style="color: #6b7280;">
+              <i class="pi pi-spin pi-spinner mr-2"></i>Looking for stranger...
+            </p>
+            <p *ngIf="!isSearching" style="color: #6b7280;">No one connected</p>
+          </div>
+        </div>
+        <span class="absolute text-sm px-2 py-1 border-round"
+              style="bottom: 10px; left: 10px; background: rgba(0,0,0,0.6); color: #fff;">
+          Stranger
+        </span>
+      </div>
+
+      <!-- Local Video -->
+      <div class="relative" style="background: #0d0d1a; width: 100%; max-height: 200px;"
+           [style.max-width.px]="300">
+        <video #localVideo autoplay playsinline muted
+               style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
+        <span class="absolute text-sm px-2 py-1 border-round"
+              style="bottom: 10px; left: 10px; background: rgba(0,0,0,0.6); color: #fff;">
+          You
+        </span>
+      </div>
+    </div>
+
+    <!-- Chat Section -->
+    <div class="chat-section flex flex-column"
+         style="width: 100%; max-width: 400px; background: #12122a; border-left: 1px solid #2a2a4a;">
+      <!-- Messages -->
+      <div #chatContainer class="flex-grow-1 overflow-auto p-3" style="min-height: 0;">
+        <div *ngIf="messages.length === 0" class="flex align-items-center justify-content-center h-full">
+          <p class="text-sm" style="color: #6b7280;">
+            <i class="pi pi-comments mr-1"></i>
+            {{ status === 'connected' ? 'Say hello!' : 'Waiting for connection...' }}
+          </p>
+        </div>
+        <div *ngFor="let msg of messages" class="mb-2 flex"
+             [class.justify-content-end]="msg.sender === 'me'">
+          <div class="msg-bubble px-3 py-2 border-round-lg text-sm"
+               [style.background]="msg.sender === 'me' ? '#6366f1' : '#2a2a4a'"
+               [style.color]="'#fff'"
+               style="max-width: 80%; word-break: break-word;">
+            {{ msg.text }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="p-3" style="border-top: 1px solid #2a2a4a;">
+        <div class="flex gap-2">
+          <input
+            [(ngModel)]="messageText"
+            (keyup.enter)="sendMessage()"
+            [disabled]="status !== 'connected'"
+            placeholder="Type a message..."
+            class="flex-grow-1 px-3 py-2 border-round-lg border-none text-sm"
+            style="background: #1e1e3a; color: #fff; outline: none;">
+          <button
+            (click)="sendMessage()"
+            [disabled]="status !== 'connected' || !messageText.trim()"
+            class="px-3 py-2 border-round-lg border-none cursor-pointer"
+            style="background: #6366f1; color: #fff;">
+            <i class="pi pi-send"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls Bar -->
+  <div class="controls flex align-items-center justify-content-center gap-3 py-3"
+       style="background: #16162a; border-top: 1px solid #2a2a4a;">
+    <button (click)="toggleAudio()"
+            class="control-btn flex align-items-center justify-content-center border-none border-circle cursor-pointer"
+            [style.background]="isAudioEnabled ? '#2a2a4a' : '#dc2626'"
+            style="width: 48px; height: 48px; color: #fff;">
+      <i class="pi" [ngClass]="isAudioEnabled ? 'pi-microphone' : 'pi-microphone-slash'"></i>
+    </button>
+
+    <button (click)="toggleVideo()"
+            class="control-btn flex align-items-center justify-content-center border-none border-circle cursor-pointer"
+            [style.background]="isVideoEnabled ? '#2a2a4a' : '#dc2626'"
+            style="width: 48px; height: 48px; color: #fff;">
+      <i class="pi" [ngClass]="isVideoEnabled ? 'pi-camera' : 'pi-times'"></i>
+    </button>
+
+    <button (click)="nextStranger()"
+            class="control-btn flex align-items-center justify-content-center border-none border-round-xl cursor-pointer px-4"
+            style="height: 48px; background: #6366f1; color: #fff;">
+      <i class="pi pi-arrow-right mr-2"></i> Next
+    </button>
+
+    <button (click)="endChat()"
+            class="control-btn flex align-items-center justify-content-center border-none border-circle cursor-pointer"
+            style="width: 48px; height: 48px; background: #dc2626; color: #fff;">
+      <i class="pi pi-phone"></i>
+    </button>
+  </div>
+</div>

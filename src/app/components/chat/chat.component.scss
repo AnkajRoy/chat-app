@@ -1,0 +1,43 @@
+.video-section {
+  position: relative;
+}
+
+.control-btn {
+  transition: transform 0.15s, opacity 0.15s;
+
+  &:hover {
+    transform: scale(1.1);
+    opacity: 0.9;
+  }
+
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+.msg-bubble {
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 991px) {
+  .chat-section {
+    max-width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid #2a2a4a;
+    max-height: 250px;
+  }
+
+  .video-section {
+    flex-direction: column !important;
+
+    > div:last-child {
+      max-width: 100% !important;
+      max-height: 150px !important;
+    }
+  }
+}

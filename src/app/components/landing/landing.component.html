@@ -1,0 +1,41 @@
+<div class="landing-container flex align-items-center justify-content-center" style="min-height: 100vh;">
+  <div class="text-center">
+    <div class="logo-section mb-5">
+      <i class="pi pi-video text-6xl mb-3" style="color: #6366f1;"></i>
+      <h1 class="text-5xl font-bold mb-2" style="color: #fff;">
+        Stranger<span style="color: #6366f1;">Chat</span>
+      </h1>
+      <p class="text-xl" style="color: #9ca3af;">
+        Meet new people through random video chat
+      </p>
+    </div>
+
+    <div class="features grid mb-5" style="max-width: 600px; margin: 0 auto;">
+      <div class="col-4 text-center">
+        <i class="pi pi-camera text-3xl mb-2" style="color: #6366f1;"></i>
+        <p class="text-sm" style="color: #9ca3af;">Video Chat</p>
+      </div>
+      <div class="col-4 text-center">
+        <i class="pi pi-comments text-3xl mb-2" style="color: #6366f1;"></i>
+        <p class="text-sm" style="color: #9ca3af;">Text Chat</p>
+      </div>
+      <div class="col-4 text-center">
+        <i class="pi pi-globe text-3xl mb-2" style="color: #6366f1;"></i>
+        <p class="text-sm" style="color: #9ca3af;">Random Match</p>
+      </div>
+    </div>
+
+    <button
+      (click)="startChat()"
+      class="start-btn px-6 py-3 text-xl font-semibold border-none border-round-xl cursor-pointer"
+      style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; transition: transform 0.2s;">
+      <i class="pi pi-play mr-2"></i>
+      Start Chatting
+    </button>
+
+    <p class="mt-4 text-sm" style="color: #6b7280;">
+      <i class="pi pi-shield mr-1"></i>
+      No login required. Completely anonymous.
+    </p>
+  </div>
+</div>
