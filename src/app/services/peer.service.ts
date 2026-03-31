@@ -76,17 +76,22 @@ export class PeerService {
     return this.localStream;
   }
 
-  connectToPeer(remotePeerId: string): void {
+  connectToPeer(remotePeerId: string, isInitiator: boolean): void {
     this.connectionStatus$.next('connecting');
     this.messages$.next([]);
 
-    const dataConn = this.peer.connect(remotePeerId, { reliable: true });
-    this.handleDataConnection(dataConn);
+    if (isInitiator) {
+      // Only the initiator opens data + media connections
+      const dataConn = this.peer.connect(remotePeerId, { reliable: true });
+      this.handleDataConnection(dataConn);
 
-    if (this.localStream) {
-      const mediaConn = this.peer.call(remotePeerId, this.localStream);
-      this.handleMediaConnection(mediaConn);
+      if (this.localStream) {
+        const mediaConn = this.peer.call(remotePeerId, this.localStream);
+        this.handleMediaConnection(mediaConn);
+      }
     }
+    // The receiver just waits — peer.on('call') and peer.on('connection')
+    // handlers in initPeer() will handle incoming connections
   }
 
   private handleDataConnection(conn: DataConnection): void {

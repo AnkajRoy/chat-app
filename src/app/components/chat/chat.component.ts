@@ -60,9 +60,9 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.status = s;
           if (s === 'connected') this.isSearching = false;
         }),
-        this.matchingService.matched$.subscribe(remotePeerId => {
+        this.matchingService.matched$.subscribe(({ peerId, isInitiator }) => {
           this.noOneAvailable = false;
-          this.peerService.connectToPeer(remotePeerId);
+          this.peerService.connectToPeer(peerId, isInitiator);
         }),
         this.matchingService.noStrangersAvailable$.subscribe(() => {
           this.isSearching = false;

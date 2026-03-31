@@ -22,7 +22,7 @@ import 'gun/sea';
 @Injectable({ providedIn: 'root' })
 export class MatchingService {
   private myPeerId = '';
-  matched$ = new Subject<string>();
+  matched$ = new Subject<{ peerId: string; isInitiator: boolean }>();
   noStrangersAvailable$ = new Subject<void>();
 
   // Track recently matched peers to avoid re-matching
@@ -73,7 +73,8 @@ export class MatchingService {
       await remove(ref(this.db, `waiting/${matchedPeerId}`));
       await set(ref(this.db, `matches/${matchedPeerId}`), peerId);
 
-      this.matched$.next(matchedPeerId);
+      // We found them — we are the initiator (caller)
+      this.matched$.next({ peerId: matchedPeerId, isInitiator: true });
     } else {
       // No new strangers available — add to waiting pool
       await set(waitingRef, true);
@@ -92,7 +93,8 @@ export class MatchingService {
           this.recentPeers.add(matchedPeerId);
           await remove(matchRef);
           await remove(waitingRef);
-          this.matched$.next(matchedPeerId);
+          // They found us — we are the receiver (wait for incoming call)
+          this.matched$.next({ peerId: matchedPeerId, isInitiator: false });
         }
       });
     }
@@ -132,7 +134,7 @@ export class MatchingService {
         this.gun.get('strangerchat-matches').get(matchedPeerId).put(peerId);
         lobby.get(peerId).put(null);
 
-        this.matched$.next(matchedPeerId);
+        this.matched$.next({ peerId: matchedPeerId, isInitiator: true });
       } else {
         this.addToWaitingAndListen(lobby, peerId);
       }
@@ -153,7 +155,7 @@ export class MatchingService {
           this.matchListener = null;
         }
 
-        this.matched$.next(matchedPeerId);
+        this.matched$.next({ peerId: matchedPeerId, isInitiator: false });
       }
     });
   }
