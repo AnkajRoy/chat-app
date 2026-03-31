@@ -19,6 +19,7 @@
     "@angular/platform-browser-dynamic": "^17.3.0",
     "@angular/router": "^17.3.0",
     "firebase": "^12.11.0",
+    "gun": "^0.2020.1241",
     "peerjs": "^1.5.5",
     "primeflex": "^4.0.0",
     "primeicons": "^7.0.0",
