@@ -6,7 +6,12 @@
       <i class="pi pi-video text-xl" style="color: #6366f1;"></i>
       <span class="text-lg font-bold" style="color: #fff;">Stranger<span style="color: #6366f1;">Chat</span></span>
     </div>
-    <div class="flex align-items-center gap-2">
+    <div class="flex align-items-center gap-3">
+      <span class="px-2 py-1 border-round text-sm flex align-items-center gap-1"
+            style="background: #1e1e3a; color: #22c55e;">
+        <i class="pi pi-users" style="font-size: 0.75rem;"></i>
+        {{ activeUsers }} online
+      </span>
       <span class="status-badge px-2 py-1 border-round text-sm"
             [style.background]="status === 'connected' ? '#065f46' : status === 'connecting' ? '#92400e' : '#7f1d1d'"
             [style.color]="'#fff'">

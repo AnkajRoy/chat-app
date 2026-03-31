@@ -22,30 +22,57 @@ export class PeerService {
   peerDisconnected$ = new Subject<void>();
 
   private readonly METERED_API_KEY = '6cd6b7e2cc7ccbab5fa6c49c3fb4f9ce4dc2';
+  private cachedIceServers: RTCIceServer[] | null = null;
 
-  async initPeer(): Promise<string> {
-    // Fetch fresh TURN credentials from Metered API
-    let iceServers: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' }
+  private async fetchIceServers(): Promise<RTCIceServer[]> {
+    if (this.cachedIceServers) return this.cachedIceServers;
+
+    const stun: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
     ];
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
       const response = await fetch(
-        `https://app-ak.metered.live/api/v1/turn/credentials?apiKey=${this.METERED_API_KEY}`
+        `https://app-ak.metered.live/api/v1/turn/credentials?apiKey=${this.METERED_API_KEY}`,
+        { signal: controller.signal }
       );
+      clearTimeout(timeout);
       const turnServers = await response.json();
-      iceServers = [...iceServers, ...turnServers];
+      this.cachedIceServers = [...stun, ...turnServers];
     } catch (err) {
-      console.warn('Failed to fetch TURN credentials, using STUN only:', err);
+      console.warn('TURN fetch failed/timed out, using STUN only');
+      this.cachedIceServers = stun;
     }
+    return this.cachedIceServers;
+  }
 
+  async initPeer(): Promise<string> {
+    // Fetch TURN credentials and create peer in parallel
+    const iceServersPromise = this.fetchIceServers();
+
+    // Start PeerJS with STUN immediately (don't wait for TURN)
     return new Promise((resolve, reject) => {
+      // Use STUN-only first for fast startup, TURN is needed only for restrictive NATs
       this.peer = new Peer({
-        config: { iceServers }
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
       });
 
       this.peer.on('open', (id) => {
         this.peerId$.next(id);
+        // Update ICE servers in background once TURN is ready
+        iceServersPromise.then(servers => {
+          if (this.peer && !this.peer.destroyed) {
+            (this.peer as any).options.config = { iceServers: servers };
+          }
+        });
         resolve(id);
       });
 
