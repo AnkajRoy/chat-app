@@ -24,6 +24,7 @@ export class PeerService {
   private dataChannel: RTCDataChannel | null = null;
   private localStream: MediaStream | null = null;
   private signalingRefs: DatabaseReference[] = [];
+  private currentRoomId = '';
 
   private myId = '';
 
@@ -122,8 +123,10 @@ export class PeerService {
     const callerCandidatesRef = ref(db, `signaling/${roomId}/callerCandidates`);
     const calleeCandidatesRef = ref(db, `signaling/${roomId}/calleeCandidates`);
 
-    // Track refs for cleanup
-    this.signalingRefs = [offerRef, answerRef, callerCandidatesRef, calleeCandidatesRef, roomRef];
+    // Track room and refs for cleanup
+    this.currentRoomId = roomId;
+    const byeRef = ref(db, `signaling/${roomId}/bye`);
+    this.signalingRefs = [offerRef, answerRef, callerCandidatesRef, calleeCandidatesRef, byeRef, roomRef];
 
     // Connection state monitoring
     pc.onconnectionstatechange = () => {
@@ -206,6 +209,17 @@ export class PeerService {
       });
     }
 
+    // Listen for "bye" signal — instant disconnect detection via Firebase
+    onValue(byeRef, (snapshot) => {
+      if (snapshot.val()) {
+        this.cleanupConnection();
+        this.remoteStream$.next(null);
+        this.messages$.next([]);
+        this.connectionStatus$.next('disconnected');
+        this.peerDisconnected$.next();
+      }
+    });
+
     // Timeout: if not connected within 10s, retry
     const timeout = setTimeout(() => {
       if (this.connectionStatus$.value !== 'connected') {
@@ -273,12 +287,12 @@ export class PeerService {
 
   // ======================== CLEANUP ========================
 
-  private cleanupConnection(): void {
+  private cleanupConnection(deleteRoom = true): void {
     // Remove Firebase signaling listeners
     this.signalingRefs.forEach(r => off(r));
 
-    // Clean up signaling data in Firebase
-    if (this.signalingRefs.length > 0) {
+    // Clean up signaling data in Firebase (only if requested)
+    if (deleteRoom && this.signalingRefs.length > 0) {
       const roomRef = this.signalingRefs[this.signalingRefs.length - 1];
       remove(roomRef).catch(() => {});
     }
@@ -305,10 +319,26 @@ export class PeerService {
   }
 
   disconnect(): void {
-    this.cleanupConnection();
+    const roomId = this.currentRoomId;
+    this.currentRoomId = '';
+
+    // Remove listeners + close WebRTC but DON'T delete the room yet
+    this.cleanupConnection(false);
     this.remoteStream$.next(null);
     this.messages$.next([]);
     this.connectionStatus$.next('disconnected');
+
+    // Signal "bye" to the other peer, THEN delete the room after a delay
+    if (roomId && this.matchingService.db) {
+      const db = this.matchingService.db;
+      const roomRef = ref(db, `signaling/${roomId}`);
+      set(ref(db, `signaling/${roomId}/bye`), true)
+        .then(() => {
+          // Give the other peer time to read the bye signal before deleting
+          setTimeout(() => remove(roomRef).catch(() => {}), 2000);
+        })
+        .catch(() => {});
+    }
   }
 
   destroy(): void {
