@@ -71,6 +71,8 @@ export class ChatComponent implements OnInit, OnDestroy {
         }),
         this.peerService.peerDisconnected$.subscribe(() => {
           this.status = 'disconnected';
+          // Auto-rejoin lobby so the disconnected user finds a new match
+          this.findStranger();
         })
       );
 
@@ -82,6 +84,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async findStranger(): Promise<void> {
+    if (this.isSearching) return; // prevent double search
     this.peerService.disconnect();
     this.isSearching = true;
     this.noOneAvailable = false;
@@ -112,6 +115,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   nextStranger(): void {
+    this.isSearching = false; // reset guard so explicit "Next" always works
     this.findStranger();
   }
 
