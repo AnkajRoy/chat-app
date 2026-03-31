@@ -25,6 +25,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   isVideoEnabled = true;
   isSearching = false;
   noOneAvailable = false;
+  activeUsers = 0;
 
   private subs: Subscription[] = [];
 
@@ -36,16 +37,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     try {
-      this.matchingService.init();
-      const stream = await this.peerService.getLocalStream();
-      await this.peerService.initPeer();
-
-      setTimeout(() => {
-        if (this.localVideo?.nativeElement) {
-          this.localVideo.nativeElement.srcObject = stream;
-        }
-      });
-
+      // Set up subscriptions first so we don't miss events
       this.subs.push(
         this.peerService.remoteStream$.subscribe(stream => {
           if (this.remoteVideo?.nativeElement) {
@@ -71,11 +63,28 @@ export class ChatComponent implements OnInit, OnDestroy {
         }),
         this.peerService.peerDisconnected$.subscribe(() => {
           this.status = 'disconnected';
-          // Auto-rejoin lobby so the disconnected user finds a new match
           this.findStranger();
+        }),
+        this.matchingService.activeUsers$.subscribe(count => {
+          this.activeUsers = count;
         })
       );
 
+      // Run camera, PeerJS, and Firebase init ALL in parallel
+      this.matchingService.init();
+      const [stream] = await Promise.all([
+        this.peerService.getLocalStream(),
+        this.peerService.initPeer()
+      ]);
+
+      setTimeout(() => {
+        if (this.localVideo?.nativeElement) {
+          this.localVideo.nativeElement.srcObject = stream;
+        }
+      });
+
+      // Track presence + join lobby immediately
+      this.matchingService.trackPresence(this.peerService.peerId$.value);
       this.findStranger();
     } catch (err) {
       console.error('Failed to initialize:', err);
@@ -84,7 +93,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async findStranger(): Promise<void> {
-    if (this.isSearching) return; // prevent double search
+    if (this.isSearching) return;
     this.peerService.disconnect();
     this.isSearching = true;
     this.noOneAvailable = false;
@@ -92,7 +101,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     const peerId = this.peerService.peerId$.value;
     if (peerId) {
       await this.matchingService.leaveLobby();
-      await this.matchingService.joinLobby(peerId);
+      this.matchingService.joinLobby(peerId);
     }
   }
 
@@ -135,5 +144,6 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.subs.forEach(s => s.unsubscribe());
     this.peerService.destroy();
     this.matchingService.leaveLobby();
+    this.matchingService.removePresence();
   }
 }
